@@ -11,6 +11,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include "common.h" 
+pthread_mutex_t g_fh_lock;
 
 // TODO: SIGINT handler to close all fd's
 void * connection_thread(void * args)
@@ -77,14 +78,26 @@ void * connection_thread(void * args)
         }
         buff = malloc(recieved_size);
         memset(buff, 0, recieved_size);
-        // TODO: MUTEX PROTECT
+
+        if(pthread_mutex_lock(&g_fh_lock) != 0)
+        {
+          perror("Mutex lock for read");
+          exit(1);
+        }
+
         if (read(fd, buff, recieved_size) < 0)
         {
           err = errno;
           perror("File read.");
           goto ERROR;
         }
-        // END MUTEX PROTECT
+
+        if(pthread_mutex_unlock(&g_fh_lock) != 0)
+        {
+          perror("Mutex unlock for read");
+          exit(1);
+        }
+
         if (write(sd, buff, recieved_size) < 0)
         {
           err = errno;
@@ -130,14 +143,24 @@ void * connection_thread(void * args)
           perror("Determining buffer size for read command\n");
           goto ERROR;
         }
-        // TODO: MUTEX PROTECT
+
+        if (pthread_mutex_lock(&g_fh_lock) != 0)
+        {
+          perror("Mutex lock for write");
+          exit(1);
+        }
         if (write(fd, buff, recieved_size) < 0)
         {
           err = errno;
           perror("Writing to file\n");
           goto ERROR;
         }
-        // END MUTEX PROTECT
+        if (pthread_mutex_unlock(&g_fh_lock) != 0)
+        {
+          perror("Mutex unlock for write");
+          exit(1);
+        }
+
         printf("WROTE %s TO FILE\n", buff);
         break;
       default:
@@ -161,9 +184,9 @@ ERROR:
     }
   }
 }
-
 int main () 
 {
+  pthread_mutex_init(&g_fh_lock, 0);
   struct addrinfo request;
   memset(&request, 0, sizeof(struct sockaddr));
   request.ai_flags = AI_PASSIVE;
@@ -180,6 +203,7 @@ int main ()
                                    "5000", 
                                    &request,
                                    &responses);
+
   handle_getaddr_error(getaddr_result);
 
   int sd = socket(AF_INET, 
