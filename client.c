@@ -86,6 +86,7 @@ int rread(FileHandle fh, void * buffer, int size)
   // client.
   
   // Place these bytes into a file.
+  // TODO: RECIEVE BYTES READ FROM SERVER
   int bytes_read = read(fh.sd, buffer, size);
   if (bytes_read < 0)
   {
@@ -114,7 +115,7 @@ int rwrite(FileHandle fh, void * buff, int size)
 {
   // Using fh socket, tell server to read size bytes
   // from the remote file.
-  char command = 'W'; // R for Read
+  char command = 'W'; // W for write 
   if (write(fh.sd, &command, sizeof(char)) < 0)
   {
     perror("Sending request for server to write to file.");
@@ -126,6 +127,7 @@ int rwrite(FileHandle fh, void * buff, int size)
     exit(1);
   }
   // Server should write size consecutive bytes to file
+  // TODO: RECIEVE BYTES WRITTEN FROM SERVER
   int bytes_written = write(fh.sd, buff, size);
   if (bytes_written < 0)
   {
@@ -150,6 +152,62 @@ int rwrite(FileHandle fh, void * buff, int size)
   return bytes_written;
 
 }
+int rseek(FileHandle fh, int whence, long offset)
+{
+  char command = 'S'; // S for seek 
+  if (write(fh.sd, &command, sizeof(char)) < 0)
+  {
+    perror("Sending request for server to write to file.");
+    exit(1);
+  }
+
+  if (write(fh.sd, &offset, sizeof(off_t)) < 0)
+  {
+    perror("Informing server of offset.");
+    exit(1);
+  }
+
+  char whence_to_send = -1;
+  switch(whence)
+  {
+    case SEEK_SET: 
+      whence_to_send = 'S'; // S for SET in SEEK_SET
+      break;
+    case SEEK_CUR: // C for CUR in SEEK_CUR
+      whence_to_send = 'C';
+      break;
+    case SEEK_END: // E for END in SEEK_END
+      whence_to_send = 'E';
+      break;
+    default:
+      fprintf(stderr, "Error! Attempted to send incorrect whence!\n");
+      exit(1);
+  }
+
+  if (write(fh.sd, &whence_to_send, sizeof(char)) < 0)
+  {
+    perror("Informing server of whence.");
+    exit(1);
+  }
+
+  // NOTE: ALL API CALLS MUST CONTAIN THIS ERRNO READ.
+  // TODO: Abstract out to own function??
+  char err = -1;
+  if (read(fh.sd, &err, sizeof(char)) < 0)
+  {
+    perror("Reading errno from server");
+    exit(1);
+  }
+  if (err)
+  {
+    fprintf(stderr, "Server returned errno %d\n", err);
+    exit(1);
+  }
+  printf("SEEK ERR: %d\n", err);
+  // TODO: Return seek amount
+  return 0;
+
+}
 
 int main () {
   FileHandle fh = ropen();
@@ -166,6 +224,19 @@ int main () {
   memset(buff, 0, 5);
   strncpy(buff, "POOP", 5);
   bytes = rwrite(fh, buff, 4);
+  printf("%d:%s\n", bytes, buff);
   // END CASE 2
+
+  // TEST CASE 3: SEEK TO BEGINNING
+  // DEPENDENT ON STREAM POINTER
+  // IN ITS STATE FROM TEST CASE 2.
+  rseek(fh, SEEK_SET, 0);
+  memset(buff, 0, 5);
+  strncpy(buff, "ABCD", 5);
+  bytes = rwrite(fh, buff, 4);
+  printf("%d:%s\n", bytes, buff);
+  // END CASE 3
+
+
   sleep(100);
 }
