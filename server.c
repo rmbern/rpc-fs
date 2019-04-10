@@ -233,6 +233,25 @@ void * connection_thread(void * args)
           goto ERROR;
         }
         break;
+      case 'C': // C for close
+        if (close(fd) != 0)
+        {
+          err = errno;
+          perror("File close");
+          goto ERROR;
+        }
+        else
+        {
+          err = 0;
+          if(write(sd, &err, sizeof(char)) < 0)
+          {
+            perror("Sending client errno");
+            exit(1);
+          }
+          close(sd);
+          pthread_exit(0);
+        }
+        break;
       default:
         fprintf(stderr, "BAD COMMAND RECIEVED FROM CLIENT\n");
         break;

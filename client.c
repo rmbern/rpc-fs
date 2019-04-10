@@ -209,18 +209,47 @@ int rseek(FileHandle fh, int whence, long offset)
 
 }
 
-int main () {
+int rclose (FileHandle fh)
+{
+  // NOTE: ALL API CALLS MUST CONTAIN THIS ERRNO READ.
+  // TODO: Abstract out to own function??
+  char command = 'C'; // C for close 
+  if (write(fh.sd, &command, sizeof(char)) < 0)
+  {
+    perror("Sending request for server to write to file.");
+    exit(1);
+  }
+
+  char err = -1;
+  if (read(fh.sd, &err, sizeof(char)) < 0)
+  {
+    perror("Reading errno from server");
+    exit(1);
+  }
+  if (err)
+  {
+    fprintf(stderr, "Server returned errno %d\n", err);
+    exit(1);
+  }
+  return 0;
+
+}
+
+int main ()
+{
   FileHandle fh = ropen();
 
   char buff[5];
 
   // TEST CASE 1: BASIC READ
+  printf("CASE 1: READ\n");
   memset(buff, 0, 5);
   int bytes = rread(fh, buff, 4);
   printf("%d:%s\n", bytes, buff);
   // END CASE 1
 
   // TEST CASE 2: BASIC WRITE
+  printf("CASE 2: WRITE\n");
   memset(buff, 0, 5);
   strncpy(buff, "POOP", 5);
   bytes = rwrite(fh, buff, 4);
@@ -230,12 +259,22 @@ int main () {
   // TEST CASE 3: SEEK TO BEGINNING
   // DEPENDENT ON STREAM POINTER
   // IN ITS STATE FROM TEST CASE 2.
+  printf("CASE 3: SEEK\n");
   rseek(fh, SEEK_SET, 0);
   memset(buff, 0, 5);
   strncpy(buff, "ABCD", 5);
   bytes = rwrite(fh, buff, 4);
   printf("%d:%s\n", bytes, buff);
   // END CASE 3
+
+  // TEST CASE 4: FILE CLOSE
+  printf("CASE 4: CLOSE\n");
+  rclose(fh);
+  memset(buff, 0, 5);
+  strncpy(buff, "NOPE", 5);
+  bytes = rwrite(fh, buff, 4);
+  printf("%d:%s\n", bytes, buff);
+  // END CASE 4
 
 
   sleep(100);
