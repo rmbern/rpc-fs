@@ -1,15 +1,18 @@
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/socket.h> 
 #include <sys/un.h> 
+#include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h> 
 #include <stdio.h> 
 #include <netdb.h> 
 #include <string.h> 
 #include <time.h>
+#include <errno.h>
 #include "common.h" 
 
-FileHandle ropen()
+FileHandle ropen(char * machineName, char * filename, int flags, int mode)
 {
   static int sd = -2; // -1 reserved for sys error
   if (sd == -2)
@@ -26,7 +29,7 @@ FileHandle ropen()
 
     struct addrinfo * responses;
 
-    int getaddr_result = getaddrinfo("localhost", 
+    int getaddr_result = getaddrinfo(machineName, 
                                      "5000", 
                                      &request,
                                      &responses);
@@ -53,12 +56,52 @@ FileHandle ropen()
       exit(1);
     }
     printf("CONNECTED\n");
+
+    // Send parameters for call to open
+    C2S_Message * msg = malloc(sizeof(C2S_Message) + strlen(filename)+1);
+                                                  // ^^ +1 for null term string
+    memset(msg, 0, sizeof(C2S_Message) + strlen(filename)+1);
+    msg->operation = 'O';
+    msg->length = strlen(filename)+1;
+    msg->flags = flags;
+    msg->mode = mode;
+    strncpy(msg->buffer, filename, msg->length);
+
+    int header_bytes_written = write(sd, msg, sizeof(C2S_Message));
+    if (header_bytes_written < 0)
+    {
+      perror("Sending header for server to write to file.");
+      exit(1);
+    }
+
+    int data_bytes_written = write(sd, msg->buffer, msg->length);
+    if (data_bytes_written < 0)
+    {
+      perror("Sending header for server to write to file.");
+      exit(1);
+    }
+    free(msg);
+
     // NOTE: CLIENT SENDS SERVER EOF WHEN THREAD DIES.
     // TODO: IS THIS UB?
     FileHandle fh;
     fh.sd = sd;
     fh.fd = NULL; 
+
+    char err = -1;
+    if (read(fh.sd, &err, sizeof(char)) < 0)
+    {
+      perror("Reading errno from server");
+      exit(1);
+    }
     
+    if (err)
+    {
+      fprintf(stderr, "Server returned errno %d\n", err);
+      errno = err;
+      perror("From server:");
+      exit(1);
+    }
     return fh;
   }
 }
@@ -105,6 +148,8 @@ int rread(FileHandle fh, void * buffer, int size)
   if (err)
   {
     fprintf(stderr, "Server returned errno %d\n", err);
+    errno = err;
+    perror("From server:");
     exit(1);
   }
   return bytes_read;
@@ -157,6 +202,8 @@ int rwrite(FileHandle fh, void * buff, int size)
   if (err)
   {
     fprintf(stderr, "Server returned errno %d\n", err);
+    errno = err;
+    perror("From server:");
     exit(1);
   }
   return header_bytes_written + data_bytes_written;
@@ -225,14 +272,14 @@ int rclose (FileHandle fh)
 
 int main ()
 {
-  FileHandle fh = ropen();
+  FileHandle fh = ropen("localhost", "FUCK", O_CREAT | O_RDWR, 0);
 
   char buff[5];
 
   // TEST CASE 1: BASIC READ
   printf("CASE 1: READ\n");
   memset(buff, 0, 5);
-  int bytes = rread(fh, buff, 4);
+  int bytes = rread(fh, buff, 5);
   printf("%d:%s\n", bytes, buff);
   // END CASE 1
 
@@ -240,7 +287,7 @@ int main ()
   printf("CASE 2: WRITE\n");
   memset(buff, 0, 5);
   strncpy(buff, "POOP", 5);
-  bytes = rwrite(fh, buff, 4);
+  bytes = rwrite(fh, buff, 5);
   printf("%d:%s\n", bytes, buff);
   // END CASE 2
 
@@ -251,7 +298,7 @@ int main ()
   rseek(fh, SEEK_SET, 0);
   memset(buff, 0, 5);
   strncpy(buff, "ABCD", 5);
-  bytes = rwrite(fh, buff, 4);
+  bytes = rwrite(fh, buff, 5);
   printf("%d:%s\n", bytes, buff);
   // END CASE 3
 
@@ -263,7 +310,6 @@ int main ()
   bytes = rwrite(fh, buff, 4);
   printf("%d:%s\n", bytes, buff);
   // END CASE 4
-
 
   sleep(100);
 }

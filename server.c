@@ -43,14 +43,15 @@ C2S_Message * recieve_message(int sd, int fd)
   message = realloc(message, sizeof(C2S_Message) + message->length);
   memset(message->buffer, 0, message->length);
   int buff_result = 0;
-  if (message->operation == 'W') // We need to fill the msg buffer
+  if (message->operation == 'W'
+      ||
+      message->operation == 'O') // We need to fill the msg buffer
   {
     if(read(sd, message->buffer, message->length) < 0)
     {
       perror("message socket read for buffer\n");
       exit(1);
     }
-    printf("PAYLOAD READ: <%s>\n", message->buffer);
   }
   return message;
 }
@@ -62,28 +63,35 @@ void * connection_thread(void * args)
   int sd = *(int*)args;
   free(args); 
   
-  int fd = open("TMP", O_CREAT | O_RDWR);
-  if (fd == -1)
-  {
-    perror("File open\n");
-    exit(1);
-  }
-
+  int fd = -1;
   while(1)
   {
     C2S_Message * msg = recieve_message(sd,fd);
-    printf("RECIEVED MSG \n");
-    // TODO: Read from msg struct directly instead
-    //       of using these variables!!!
-    int recieved_size = msg->length; 
-    long offset_amount = msg->offset;
-    int whence = msg->whence;
-    char * buff = msg->buffer;
     int err = 0;
     switch(msg->operation)
     {
+      case 'O': // O for Open
+        if(pthread_mutex_lock(&g_fh_lock) != 0)
+        {
+          err = errno;
+          perror("Mutex lock for open");
+          goto ERROR;
+        }
+        fd = open(msg->buffer, msg->flags, msg->mode);
+        if (fd == -1)
+        {
+          perror("File open\n");
+          exit(1);
+        }
+        if(pthread_mutex_unlock(&g_fh_lock) != 0)
+        {
+          err = errno;
+          perror("Mutex unlock for open");
+          goto ERROR;
+        } 
+        break;
       case 'R': // R for Read
-        memset(buff, 0, recieved_size);
+        memset(msg->buffer, 0, msg->length);
 
         if(pthread_mutex_lock(&g_fh_lock) != 0)
         {
@@ -92,7 +100,7 @@ void * connection_thread(void * args)
           goto ERROR;
         }
 
-        if (read(fd, buff, recieved_size) < 0)
+        if (read(fd, msg->buffer, msg->length) < 0)
         {
           err = errno;
           perror("File read.");
@@ -106,7 +114,7 @@ void * connection_thread(void * args)
           goto ERROR;
         }
 
-        if (write(sd, buff, recieved_size) < 0)
+        if (write(sd, msg->buffer, msg->length) < 0)
         {
           err = errno;
           perror("Writing to client.");
@@ -120,7 +128,7 @@ void * connection_thread(void * args)
           perror("Mutex lock for write");
           goto ERROR;
         }
-        if (write(fd, buff, recieved_size) < 0)
+        if (write(fd, msg->buffer, msg->length) < 0)
         {
           err = errno;
           perror("Writing to file\n");
@@ -133,17 +141,15 @@ void * connection_thread(void * args)
           goto ERROR;
         }
 
-        printf("WROTE %s TO FILE\n", buff);
         break;
 
       case 'S': // S for seek
-        printf("SEEK\n");
         if(pthread_mutex_lock(&g_fh_lock) != 0)
         {
           perror("Mutex lock for seek");
           goto ERROR;
         }
-        if (lseek(fd, offset_amount, whence) < 0)
+        if (lseek(fd, msg->offset, msg->whence) < 0)
         {
           err = errno;
           perror("File seek\n");
