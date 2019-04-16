@@ -21,7 +21,10 @@ typedef struct C2S_Message // C2S -> Client 2 Server
 	int flags;
 	int mode;
 	int length;
+  long offset;
+  int whence;
 	char buffer[0]; // length determined at runtime.
+                  // GNU C ONLY
 }C2S_Message;
 
 typedef struct S2C_Message

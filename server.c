@@ -13,6 +13,48 @@
 #include "common.h" 
 pthread_mutex_t g_fh_lock;
 
+C2S_Message * recieve_message(int sd, int fd)
+// We need the sd to get the message over the network,
+// and the file descriptor to close the file if the
+// connection dies.
+{
+  C2S_Message * message = malloc(sizeof(C2S_Message));
+  memset(message, 0, sizeof(C2S_Message));
+  int result = read(sd, message, sizeof(C2S_Message));
+  if (result < 0)
+  {
+    perror("message socket read\n");
+    exit(1);
+  } 
+  if (result == 0)
+  {
+    printf("EOF or socket close detected\n");
+    printf("Connection thread exiting.\n");
+    close(fd);
+    close(sd);
+    pthread_exit(0);
+  }
+  else if (result < 0)
+  {
+    fprintf(stderr, "Unknown error from message recieve\n");
+    exit(1);
+  }
+  
+  message = realloc(message, sizeof(C2S_Message) + message->length);
+  memset(message->buffer, 0, message->length);
+  int buff_result = 0;
+  if (message->operation == 'W') // We need to fill the msg buffer
+  {
+    if(read(sd, message->buffer, message->length) < 0)
+    {
+      perror("message socket read for buffer\n");
+      exit(1);
+    }
+    printf("PAYLOAD READ: <%s>\n", message->buffer);
+  }
+  return message;
+}
+
 void * connection_thread(void * args)
 {
   pthread_detach(pthread_self());
@@ -20,7 +62,6 @@ void * connection_thread(void * args)
   int sd = *(int*)args;
   free(args); 
   
-  printf("NEW FD\n");
   int fd = open("TMP", O_CREAT | O_RDWR);
   if (fd == -1)
   {
@@ -30,48 +71,18 @@ void * connection_thread(void * args)
 
   while(1)
   {
-    char command_byte = -1;
-    int result = read(sd, &command_byte, 1);
-    if (result == 0)
-    {
-      printf("EOF or broken TCP connection detected.\n");
-      printf("Connection thread exiting\n");
-      close(sd);
-      close(fd);
-      pthread_exit(0);
-    }
-    else if (result < 0)
-    {
-      perror("Command Byte socket read\n");
-      exit(1);
-    } 
-    printf("%c\n", command_byte);
-    int recieved_size = -1;
-    off_t offset_amount = -1;
-    int send_size = -1;
-    char recieved_whence = -1;
-    char err = 0;
-    char * buff;
-    switch(command_byte)
+    C2S_Message * msg = recieve_message(sd,fd);
+    printf("RECIEVED MSG \n");
+    // TODO: Read from msg struct directly instead
+    //       of using these variables!!!
+    int recieved_size = msg->length; 
+    long offset_amount = msg->offset;
+    int whence = msg->whence;
+    char * buff = msg->buffer;
+    int err = 0;
+    switch(msg->operation)
     {
       case 'R': // R for Read
-        result = read(sd, &recieved_size, sizeof(int));
-        if (result == 0)
-        {
-          err = errno;
-          printf("EOF or broken TCP connection detected.\n");
-          printf("Connection thread exiting\n");
-          close(sd);
-          close(fd);
-          pthread_exit(0);
-        }
-        else if (result < 0)
-        {
-          err = errno;
-          perror("Determining buffer size for read command\n");
-          goto ERROR;
-        }
-        buff = malloc(recieved_size);
         memset(buff, 0, recieved_size);
 
         if(pthread_mutex_lock(&g_fh_lock) != 0)
@@ -101,46 +112,8 @@ void * connection_thread(void * args)
           perror("Writing to client.");
           goto ERROR;
         }
-        free(buff);
         break;
       case 'W':
-        // TODO: abstract these reads out to fn?
-        result = read(sd, &recieved_size, sizeof(int));
-        if (result == 0)
-        {
-          err = errno;
-          printf("EOF or broken TCP connection detected.\n");
-          printf("Connection thread exiting\n");
-          close(sd);
-          close(fd);
-          pthread_exit(0);
-        }
-        else if (result < 0)
-        {
-          err = errno;
-          perror("Determining buffer size for read command\n");
-          goto ERROR;
-        }
-
-        buff = malloc(recieved_size);
-        memset(buff, 0, recieved_size);
-        result = read(sd, buff, recieved_size);
-        if (result == 0)
-        {
-          err = errno;
-          printf("EOF or broken TCP connection detected.\n");
-          printf("Connection thread exiting\n");
-          close(sd);
-          close(fd);
-          pthread_exit(0);
-        }
-        else if (result < 0)
-        {
-          err = errno;
-          perror("Determining buffer size for read command\n");
-          goto ERROR;
-        }
-
         if (pthread_mutex_lock(&g_fh_lock) != 0)
         {
           err = errno;
@@ -164,57 +137,7 @@ void * connection_thread(void * args)
         break;
 
       case 'S': // S for seek
-        result = read(sd, &offset_amount, sizeof(off_t));
-        if (result == 0)
-        {
-          err = errno;
-          printf("EOF or broken TCP connection detected.\n");
-          printf("Connection thread exiting\n");
-          close(sd);
-          close(fd);
-          pthread_exit(0);
-        }
-        else if (result < 0)
-        {
-          err = errno;
-          perror("Determining offset amount for seek command\n");
-          goto ERROR;
-        }
-        printf("OFFSET %lu\n", offset_amount);
-        result = read(sd, &recieved_whence, sizeof(char));
-        if (result == 0)
-        {
-          err = errno;
-          printf("EOF or broken TCP connection detected.\n");
-          printf("Connection thread exiting\n");
-          close(sd);
-          close(fd);
-          pthread_exit(0);
-        }
-        else if (result < 0)
-        {
-          err = errno;
-          perror("Determining whence for seek\n");
-          goto ERROR;
-        }
-        int whence = -1; 
-        printf("RECIEVED WHENCE <%c>\n", recieved_whence);
-        switch(recieved_whence)
-        {
-          case 'S': // S for SET in SEEK_SET
-            whence = SEEK_SET;
-            break;
-          case 'C': // C for CUR in SEEK_CUR
-            whence = SEEK_CUR;
-            break;
-          case 'E': // E for END in SEEK_END
-            whence = SEEK_END;
-            break;
-          default:
-            fprintf(stderr, "Error! Incorrect whence recieved!\n");
-            exit(1);
-            break;
-        }
+        printf("SEEK\n");
         if(pthread_mutex_lock(&g_fh_lock) != 0)
         {
           perror("Mutex lock for seek");
@@ -226,7 +149,6 @@ void * connection_thread(void * args)
           perror("File seek\n");
           goto ERROR;
         }
-        printf("SEEK %lu, %d\n", offset_amount, whence);
         if (pthread_mutex_unlock(&g_fh_lock) != 0)
         {
           perror("Mutex unlock for seek");
@@ -257,11 +179,11 @@ void * connection_thread(void * args)
         break;
     }
 
+    free(msg);
     // Send client server's errno at the end of 
     // quick google search says errno is thread
     // safe. Yay!
 ERROR:
-    printf("SENDING ERR: %d\n", err);
     if(write(sd, &err, sizeof(char)) < 0)
     {
       perror("Sending client errno");

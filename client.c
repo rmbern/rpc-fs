@@ -71,15 +71,14 @@ int rread(FileHandle fh, void * buffer, int size)
  
   // Using fh socket, tell server to read size bytes
   // from the remote file.
-  char command = 'R'; // R for Read
-  if (write(fh.sd, &command, sizeof(char)) < 0)
+
+  C2S_Message msg;
+  memset(&msg, 0, sizeof(C2S_Message));
+  msg.operation = 'R'; // R for Read
+  msg.length = size;
+  if (write(fh.sd, &msg, sizeof(C2S_Message)) < 0)
   {
-    perror("Sending request for server to read file.");
-    exit(1);
-  }
-  if (write(fh.sd, &size, sizeof(int)) < 0)
-  {
-    perror("Informing server of how many bytes to read.");
+    perror("Sending read request to server");
     exit(1);
   }
   // Server should send size consecutive bytes to the
@@ -115,26 +114,37 @@ int rwrite(FileHandle fh, void * buff, int size)
 {
   // Using fh socket, tell server to read size bytes
   // from the remote file.
-  char command = 'W'; // W for write 
-  if (write(fh.sd, &command, sizeof(char)) < 0)
+
+  // We can't keep the message on the stack here, unlike
+  // the other commands, because we send over a variable
+  // length buffer with relevant data in it.
+  C2S_Message * msg = malloc(sizeof(C2S_Message) + size);
+  memset(msg, 0, sizeof(C2S_Message) + size);
+  msg->operation = 'W'; // W for write
+  msg->length = size;
+
+  if(memcpy(msg->buffer, buff, size) == NULL)
   {
-    perror("Sending request for server to write to file.");
+    perror("Buffer copy for write request");
     exit(1);
   }
-  if (write(fh.sd, &size, sizeof(int)) < 0)
-  {
-    perror("Informing server of how many bytes to write.");
-    exit(1);
-  }
+  printf("WRITE BUFFER: <%s>\n", msg->buffer);
   // Server should write size consecutive bytes to file
   // TODO: RECIEVE BYTES WRITTEN FROM SERVER
-  int bytes_written = write(fh.sd, buff, size);
-  if (bytes_written < 0)
+  int header_bytes_written = write(fh.sd, msg, sizeof(C2S_Message));
+  if (header_bytes_written < 0)
   {
-    perror("Sending data for server to write to file.");
+    perror("Sending header for server to write to file.");
+    exit(1);
+  }
+  int data_bytes_written = write(fh.sd, msg->buffer, msg->length);
+  if (data_bytes_written < 0)
+  {
+    perror("Sending header for server to write to file.");
     exit(1);
   }
 
+  free(msg);
   // NOTE: ALL API CALLS MUST CONTAIN THIS ERRNO READ.
   // TODO: Abstract out to own function??
   char err = -1;
@@ -149,44 +159,20 @@ int rwrite(FileHandle fh, void * buff, int size)
     fprintf(stderr, "Server returned errno %d\n", err);
     exit(1);
   }
-  return bytes_written;
+  return header_bytes_written + data_bytes_written;
 
 }
 int rseek(FileHandle fh, int whence, long offset)
 {
-  char command = 'S'; // S for seek 
-  if (write(fh.sd, &command, sizeof(char)) < 0)
-  {
-    perror("Sending request for server to write to file.");
-    exit(1);
-  }
+  C2S_Message msg;
+  memset(&msg, 0, sizeof(C2S_Message));
+  msg.operation = 'S'; // S for seek
+  msg.whence = whence;
+  msg.offset = offset;
 
-  if (write(fh.sd, &offset, sizeof(off_t)) < 0)
+  if (write(fh.sd, &msg, sizeof(C2S_Message)) < 0)
   {
-    perror("Informing server of offset.");
-    exit(1);
-  }
-
-  char whence_to_send = -1;
-  switch(whence)
-  {
-    case SEEK_SET: 
-      whence_to_send = 'S'; // S for SET in SEEK_SET
-      break;
-    case SEEK_CUR: // C for CUR in SEEK_CUR
-      whence_to_send = 'C';
-      break;
-    case SEEK_END: // E for END in SEEK_END
-      whence_to_send = 'E';
-      break;
-    default:
-      fprintf(stderr, "Error! Attempted to send incorrect whence!\n");
-      exit(1);
-  }
-
-  if (write(fh.sd, &whence_to_send, sizeof(char)) < 0)
-  {
-    perror("Informing server of whence.");
+    perror("Informing server of offset/whence.");
     exit(1);
   }
 
@@ -213,8 +199,10 @@ int rclose (FileHandle fh)
 {
   // NOTE: ALL API CALLS MUST CONTAIN THIS ERRNO READ.
   // TODO: Abstract out to own function??
-  char command = 'C'; // C for close 
-  if (write(fh.sd, &command, sizeof(char)) < 0)
+  C2S_Message msg;
+  memset(&msg, 0, sizeof(C2S_Message));
+  msg.operation = 'C';
+  if (write(fh.sd, &msg, sizeof(C2S_Message)) < 0)
   {
     perror("Sending request for server to write to file.");
     exit(1);
