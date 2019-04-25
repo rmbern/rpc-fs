@@ -55,7 +55,6 @@ FileHandle ropen(char * machineName, char * filename, int flags, int mode)
       perror("Socket connect");
       exit(1);
     }
-    printf("CONNECTED\n");
 
     // Send parameters for call to open
     C2S_Message * msg = malloc(sizeof(C2S_Message) + strlen(filename)+1);
@@ -83,7 +82,6 @@ FileHandle ropen(char * machineName, char * filename, int flags, int mode)
     free(msg);
 
     // NOTE: CLIENT SENDS SERVER EOF WHEN THREAD DIES.
-    // TODO: IS THIS UB?
 
     S2C_Message res;
     memset(&res, 0, sizeof(S2C_Message));
@@ -105,9 +103,6 @@ FileHandle ropen(char * machineName, char * filename, int flags, int mode)
 
 int rread(FileHandle fh, void * buffer, int size)
 {
-  // TODO: TEST A TRUNCATION:
-  //       IE SOMETHING LIKE ASKING TO READ 1000 BYTES FROM
-  //       A 100 BYTE FILE
  
   // Using fh socket, tell server to read size bytes
   // from the remote file.
@@ -125,7 +120,6 @@ int rread(FileHandle fh, void * buffer, int size)
   // client.
   
   // Place these bytes into a file.
-  // TODO: RECIEVE BYTES READ FROM SERVER
   int bytes_read = read(fh, buffer, size);
   if (bytes_read < 0)
   {
@@ -168,9 +162,7 @@ int rwrite(FileHandle fh, void * buff, int size)
     perror("Buffer copy for write request");
     exit(1);
   }
-  printf("WRITE BUFFER: <%s>\n", msg->buffer);
   // Server should write size consecutive bytes to file
-  // TODO: RECIEVE BYTES WRITTEN FROM SERVER
   int header_bytes_written = write(fh, msg, sizeof(C2S_Message));
   if (header_bytes_written < 0)
   {
@@ -230,7 +222,6 @@ int rseek(FileHandle fh, int whence, long offset)
     fprintf(stderr, "Server returned errno %d\n", res.err);
     errno = res.err;
   }
-  // TODO: Return seek amount
   return res.byte_count;
 
 }
