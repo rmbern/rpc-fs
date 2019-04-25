@@ -63,19 +63,22 @@ void * connection_thread(void * args)
   int sd = *(int*)args;
   free(args); 
   
-  int fd = -1;
+  int fd = -1; // changes after open
   while(1)
   {
     C2S_Message * msg = recieve_message(sd,fd);
-    int err = 0;
+    S2C_Message res;
+    memset(&res, 0, sizeof(S2C_Message));
+    // The gotos below are to resolve any confusion or ambiguity with
+    // the intent of a break being in both a loop and a switch statement.
     switch(msg->operation)
     {
       case 'O': // O for Open
         if(pthread_mutex_lock(&g_fh_lock) != 0)
         {
-          err = errno;
+          res.err = errno;
           perror("Mutex lock for open");
-          goto ERROR;
+          goto RESPONSE;
         }
         fd = open(msg->buffer, msg->flags, msg->mode);
         if (fd == -1)
@@ -85,93 +88,96 @@ void * connection_thread(void * args)
         }
         if(pthread_mutex_unlock(&g_fh_lock) != 0)
         {
-          err = errno;
+          res.err = errno;
           perror("Mutex unlock for open");
-          goto ERROR;
+          goto RESPONSE;
         } 
-        break;
+        goto RESPONSE;
       case 'R': // R for Read
         memset(msg->buffer, 0, msg->length);
 
         if(pthread_mutex_lock(&g_fh_lock) != 0)
         {
-          err = errno;
+          res.err = errno;
           perror("Mutex lock for read");
-          goto ERROR;
+          goto RESPONSE;
         }
 
-        if (read(fd, msg->buffer, msg->length) < 0)
+        if (res.byte_count = read(fd, msg->buffer, msg->length) < 0)
         {
-          err = errno;
+          res.err = errno;
           perror("File read.");
-          goto ERROR;
+          goto RESPONSE;
         }
 
         if(pthread_mutex_unlock(&g_fh_lock) != 0)
         {
-          err = errno;
+          res.err = errno;
           perror("Mutex unlock for read");
-          goto ERROR;
+          goto RESPONSE;
         }
 
-        if (write(sd, msg->buffer, msg->length) < 0)
+        // This should be part of the S2C_Message, but
+        // the deadline nears...
+        if(write(sd, msg->buffer, msg->length) < 0)
         {
-          err = errno;
-          perror("Writing to client.");
-          goto ERROR;
+          res.err = errno;
+          perror("Sending read string to client");
+          goto RESPONSE;
         }
-        break;
+        goto RESPONSE;
       case 'W':
         if (pthread_mutex_lock(&g_fh_lock) != 0)
         {
-          err = errno;
+          res.err = errno;
           perror("Mutex lock for write");
-          goto ERROR;
+          goto RESPONSE;
         }
-        if (write(fd, msg->buffer, msg->length) < 0)
+        res.byte_count = write(fd, msg->buffer, msg->length);
+        if (res.byte_count < 0)
         {
-          err = errno;
+          res.err = errno;
           perror("Writing to file\n");
-          goto ERROR;
+          goto RESPONSE;
         }
         if (pthread_mutex_unlock(&g_fh_lock) != 0)
         {
-          err = errno;
+          res.err = errno;
           perror("Mutex unlock for write");
-          goto ERROR;
+          goto RESPONSE;
         }
-
-        break;
+        goto RESPONSE;
 
       case 'S': // S for seek
         if(pthread_mutex_lock(&g_fh_lock) != 0)
         {
           perror("Mutex lock for seek");
-          goto ERROR;
+          goto RESPONSE;
         }
-        if (lseek(fd, msg->offset, msg->whence) < 0)
+        res.byte_count = lseek(fd, msg->offset, msg->whence);
+        if (res.byte_count < 0)
         {
-          err = errno;
+          res.err = errno;
           perror("File seek\n");
-          goto ERROR;
+          goto RESPONSE;
         }
         if (pthread_mutex_unlock(&g_fh_lock) != 0)
         {
           perror("Mutex unlock for seek");
-          goto ERROR;
+          goto RESPONSE;
         }
-        break;
+        goto RESPONSE;
       case 'C': // C for close
         if (close(fd) != 0)
         {
-          err = errno;
+          res.err = errno;
           perror("File close");
-          goto ERROR;
+          goto RESPONSE;
         }
         else
         {
-          err = 0;
-          if(write(sd, &err, sizeof(char)) < 0)
+          res.err = 0;
+          if(write(sd, &msg, sizeof(S2C_Message)) < 0)
           {
             perror("Sending client errno");
             exit(1);
@@ -179,23 +185,23 @@ void * connection_thread(void * args)
           close(sd);
           pthread_exit(0);
         }
-        break;
+        goto RESPONSE;
       default:
         fprintf(stderr, "BAD COMMAND RECIEVED FROM CLIENT\n");
-        break;
+        goto RESPONSE;
     }
 
-    free(msg);
     // Send client server's errno at the end of 
     // quick google search says errno is thread
     // safe. Yay!
-ERROR:
-    if(write(sd, &err, sizeof(char)) < 0)
+RESPONSE:
+    free(msg);
+    if(write(sd, &res, sizeof(S2C_Message)) < 0)
     {
-      perror("Sending client errno");
+      perror("Sending client response");
       exit(1);
     }
-    if(err)
+    if(res.err)
     {
       exit(1);
     }

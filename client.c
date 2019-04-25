@@ -84,25 +84,22 @@ FileHandle ropen(char * machineName, char * filename, int flags, int mode)
 
     // NOTE: CLIENT SENDS SERVER EOF WHEN THREAD DIES.
     // TODO: IS THIS UB?
-    FileHandle fh;
-    fh.sd = sd;
-    fh.fd = NULL; 
 
-    char err = -1;
-    if (read(fh.sd, &err, sizeof(char)) < 0)
+    S2C_Message res;
+    memset(&res, 0, sizeof(S2C_Message));
+
+    if (read(sd, &res, sizeof(S2C_Message)) < 0)
     {
-      perror("Reading errno from server");
+      perror("Reading res from server");
       exit(1);
     }
     
-    if (err)
+    if (res.err)
     {
-      fprintf(stderr, "Server returned errno %d\n", err);
-      errno = err;
-      perror("From server:");
-      exit(1);
+      fprintf(stderr, "Server returned errno %d\n", res.err);
+      errno = res.err;
     }
-    return fh;
+    return sd;
   }
 }
 
@@ -119,7 +116,7 @@ int rread(FileHandle fh, void * buffer, int size)
   memset(&msg, 0, sizeof(C2S_Message));
   msg.operation = 'R'; // R for Read
   msg.length = size;
-  if (write(fh.sd, &msg, sizeof(C2S_Message)) < 0)
+  if (write(fh, &msg, sizeof(C2S_Message)) < 0)
   {
     perror("Sending read request to server");
     exit(1);
@@ -129,28 +126,26 @@ int rread(FileHandle fh, void * buffer, int size)
   
   // Place these bytes into a file.
   // TODO: RECIEVE BYTES READ FROM SERVER
-  int bytes_read = read(fh.sd, buffer, size);
+  int bytes_read = read(fh, buffer, size);
   if (bytes_read < 0)
   {
     perror("Receiving file data from server.");
     exit(1);
   }
 
-  // NOTE: ALL API CALLS MUST CONTAIN THIS ERRNO READ.
-  // TODO: Abstract out to own function??
-  char err = -1;
-  if (read(fh.sd, &err, sizeof(char)) < 0)
+  // NOTE: ALL API CALLS MUST CONTAIN THIS RESPONSE READ.
+  S2C_Message res;
+  memset(&res, 0, sizeof(S2C_Message));
+  if (read(fh, &res, sizeof(S2C_Message)) < 0)
   {
     perror("Reading errno from server");
     exit(1);
   }
   
-  if (err)
+  if (res.err)
   {
-    fprintf(stderr, "Server returned errno %d\n", err);
-    errno = err;
-    perror("From server:");
-    exit(1);
+    fprintf(stderr, "Server returned errno %d\n", res.err);
+    errno = res.err;
   }
   return bytes_read;
 }
@@ -176,13 +171,13 @@ int rwrite(FileHandle fh, void * buff, int size)
   printf("WRITE BUFFER: <%s>\n", msg->buffer);
   // Server should write size consecutive bytes to file
   // TODO: RECIEVE BYTES WRITTEN FROM SERVER
-  int header_bytes_written = write(fh.sd, msg, sizeof(C2S_Message));
+  int header_bytes_written = write(fh, msg, sizeof(C2S_Message));
   if (header_bytes_written < 0)
   {
     perror("Sending header for server to write to file.");
     exit(1);
   }
-  int data_bytes_written = write(fh.sd, msg->buffer, msg->length);
+  int data_bytes_written = write(fh, msg->buffer, msg->length);
   if (data_bytes_written < 0)
   {
     perror("Sending header for server to write to file.");
@@ -190,25 +185,24 @@ int rwrite(FileHandle fh, void * buff, int size)
   }
 
   free(msg);
-  // NOTE: ALL API CALLS MUST CONTAIN THIS ERRNO READ.
-  // TODO: Abstract out to own function??
-  char err = -1;
-  if (read(fh.sd, &err, sizeof(char)) < 0)
+  // NOTE: ALL API CALLS MUST CONTAIN THIS RESPONSE READ.
+  S2C_Message res;
+  memset(&res, 0, sizeof(S2C_Message));
+  if (read(fh, &res, sizeof(S2C_Message)) < 0)
   {
     perror("Reading errno from server");
     exit(1);
   }
 
-  if (err)
+  if (res.err)
   {
-    fprintf(stderr, "Server returned errno %d\n", err);
-    errno = err;
-    perror("From server:");
-    exit(1);
+    fprintf(stderr, "Server returned errno %d\n", res.err);
+    errno = res.err;
   }
-  return header_bytes_written + data_bytes_written;
+  return res.byte_count;
 
 }
+
 int rseek(FileHandle fh, int whence, long offset)
 {
   C2S_Message msg;
@@ -217,55 +211,54 @@ int rseek(FileHandle fh, int whence, long offset)
   msg.whence = whence;
   msg.offset = offset;
 
-  if (write(fh.sd, &msg, sizeof(C2S_Message)) < 0)
+  if (write(fh, &msg, sizeof(C2S_Message)) < 0)
   {
     perror("Informing server of offset/whence.");
     exit(1);
   }
 
   // NOTE: ALL API CALLS MUST CONTAIN THIS ERRNO READ.
-  // TODO: Abstract out to own function??
-  char err = -1;
-  if (read(fh.sd, &err, sizeof(char)) < 0)
+  S2C_Message res;
+  memset(&res, 0, sizeof(S2C_Message));
+  if (read(fh, &res, sizeof(S2C_Message)) < 0)
   {
     perror("Reading errno from server");
     exit(1);
   }
-  if (err)
+  if (res.err)
   {
-    fprintf(stderr, "Server returned errno %d\n", err);
-    exit(1);
+    fprintf(stderr, "Server returned errno %d\n", res.err);
+    errno = res.err;
   }
-  printf("SEEK ERR: %d\n", err);
   // TODO: Return seek amount
-  return 0;
+  return res.byte_count;
 
 }
 
 int rclose (FileHandle fh)
 {
-  // NOTE: ALL API CALLS MUST CONTAIN THIS ERRNO READ.
-  // TODO: Abstract out to own function??
   C2S_Message msg;
   memset(&msg, 0, sizeof(C2S_Message));
   msg.operation = 'C';
-  if (write(fh.sd, &msg, sizeof(C2S_Message)) < 0)
+  if (write(fh, &msg, sizeof(C2S_Message)) < 0)
   {
     perror("Sending request for server to write to file.");
     exit(1);
   }
 
-  char err = -1;
-  if (read(fh.sd, &err, sizeof(char)) < 0)
+  // NOTE: ALL API CALLS MUST CONTAIN THIS ERRNO READ.
+  S2C_Message res;
+  memset(&res, 0, sizeof(S2C_Message));
+  if (read(fh, &res, sizeof(S2C_Message)) < 0)
   {
     perror("Reading errno from server");
     exit(1);
   }
-  if (err)
+  if (res.err)
   {
-    fprintf(stderr, "Server returned errno %d\n", err);
-    exit(1);
+    fprintf(stderr, "Server returned errno %d\n", res.err);
+    errno = res.err;
   }
-  return 0;
+  return res.err;
 
 }
