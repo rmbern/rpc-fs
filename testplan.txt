@@ -1,0 +1,30 @@
+Run make.
+
+Ensure port 5000 is not in use on clamshell and crabshell.
+
+On crabshell, run ./server
+
+On clamshell, run ./test
+
+The test client will open/create a file CENSORED (insider joke), and 
+try to read, write, seek, and close the file. It will then terminate
+after trying to write to the closed file. You can run ./test a second 
+time with the already existing file to ensure read will not return
+blank if there is data in a file.
+
+To see the results of the write and seek on the file CENSORED, just cat
+or less it.
+
+On the first run of ./test, CENSORED will contain "EFGH".
+
+On all subsuquent runs, it will contain "ABCDEFGH".
+
+To check for thread saftey, on clamshell, run bash. Then run the
+following command exactly as it is stated without quotes:
+
+"for i in {1..20} ; do ./test & done"
+
+This will run twenty instances of the test client simultaneously.
+
+To check file integrity, the same cat and less can be run on CENSORED
+as before. The same "ABCDEFGH" string is expected.

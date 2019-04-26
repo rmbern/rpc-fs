@@ -25,7 +25,7 @@ int main()
   // TEST CASE 2: BASIC WRITE
   printf("CASE 2: WRITE\n");
   memset(buff, 0, 5);
-  strncpy(buff, "POOP", 5);
+  strncpy(buff, "EFGH", 5);
   bytes = rwrite(fh, buff, 5);
   printf("Bytes written <%d> : Buffer <%s>\n", bytes, buff);
   // END CASE 2
