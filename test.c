@@ -9,7 +9,7 @@ int main()
   // Run from clamshell
   FileHandle fh = ropen("crabshell.rutgers.edu",
                         "CENSORED", 
-                        O_CREAT | O_RDWR, 777);
+                        O_CREAT | O_RDWR, 0777);
 
   char buff[5];
 
