@@ -177,7 +177,7 @@ void * connection_thread(void * args)
         else
         {
           res.err = 0;
-          if(write(sd, &msg, sizeof(S2C_Message)) < 0)
+          if(write(sd, &res, sizeof(S2C_Message)) < 0)
           {
             perror("Sending client errno");
             exit(1);
